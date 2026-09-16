@@ -1,0 +1,115 @@
+name: Build Custom Termux APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'Target Package Name'
+        required: true
+        default: 'com.zhiliaoapp.musically'
+      app_name:
+        description: 'App Display Name'
+        required: true
+        default: 'TikTok'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Maximize Build Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          df -h
+
+      # STEP 1: Cross-compile minimal bootstrap via termux-packages Docker
+      - name: Checkout termux-packages
+        uses: actions/checkout@v4
+        with:
+          repository: termux/termux-packages
+          path: termux-packages
+          depth: 1
+
+      - name: Configure Custom Prefix in termux-packages
+        run: |
+          cd termux-packages
+          PKG_NAME="${{ github.event.inputs.package_name }}"
+          echo "Target package: $PKG_NAME"
+          sed -i "s/TERMUX_APP_PACKAGE=\"com.termux\"/TERMUX_APP_PACKAGE=\"$PKG_NAME\"/g" properties.sh
+
+      - name: Build Minimal Bootstrap via Official Docker Container
+        run: |
+          cd termux-packages
+          docker pull ghcr.io/termux/package-builder:latest
+
+          docker run --rm \
+            -v "$(pwd)":/home/builder/termux-packages \
+            -e TERMUX_ARCH="aarch64" \
+            ghcr.io/termux/package-builder:latest \
+            /bin/bash -c "
+              cd /home/builder/termux-packages
+              ./build-package.sh -a aarch64 -I bash
+              ./build-package.sh -a aarch64 -I coreutils
+              ./build-package.sh -a aarch64 -I tar
+              ./build-package.sh -a aarch64 -I xz-utils
+              ./build-package.sh -a aarch64 -I proot
+              ./scripts/generate-bootstraps.sh --architectures aarch64
+            "
+
+      - name: Locate Generated Bootstrap Zip
+        id: find_bootstrap
+        run: |
+          ZIP_FILE=$(find termux-packages -name "bootstrap-aarch64.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::Bootstrap zip generation failed!"
+            exit 1
+          fi
+          echo "Found bootstrap at: $ZIP_FILE"
+          echo "zip_path=$ZIP_FILE" >> $GITHUB_OUTPUT
+
+      # STEP 2: Configure & compile termux-app with custom ID
+      - name: Checkout termux-app
+        uses: actions/checkout@v4
+        with:
+          repository: termux/termux-app
+          path: termux-app
+          depth: 1
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Embed Bootstrap & Rebrand APK
+        run: |
+          PKG_NAME="${{ github.event.inputs.package_name }}"
+          APP_TITLE="${{ github.event.inputs.app_name }}"
+
+          mkdir -p termux-app/app/src/main/assets
+          cp ${{ steps.find_bootstrap.outputs.zip_path }} termux-app/app/src/main/assets/bootstrap-aarch64.zip
+
+          cd termux-app
+          sed -i "s/applicationId \"com.termux\"/applicationId \"$PKG_NAME\"/g" app/build.gradle
+          sed -i "s/<string name=\"application_name\">.*<\/string>/<string name=\"application_name\">$APP_TITLE<\/string>/g" app/src/main/res/values/strings.xml || true
+
+      - name: Build Debug APK
+        run: |
+          cd termux-app
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      # STEP 3: Upload Artifact (Direct Download Link)
+      - name: Upload Custom Termux APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-termux-${{ github.event.inputs.package_name }}
+          path: termux-app/app/build/outputs/apk/debug/*.apk
+          retention-days: 7

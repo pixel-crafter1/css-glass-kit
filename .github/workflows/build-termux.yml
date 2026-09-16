@@ -39,7 +39,13 @@ jobs:
           cd termux-packages
           PKG_NAME="${{ github.event.inputs.package_name }}"
           echo "Target package: $PKG_NAME"
-          sed -i "s/TERMUX_APP_PACKAGE=\"com.termux\"/TERMUX_APP_PACKAGE=\"$PKG_NAME\"/g" properties.sh
+          # In modern termux-packages, properties.sh is located in scripts/properties.sh
+          if [ -f "scripts/properties.sh" ]; then
+            sed -i "s/TERMUX_APP_PACKAGE=\"com.termux\"/TERMUX_APP_PACKAGE=\"$PKG_NAME\"/g" scripts/properties.sh
+          fi
+          if [ -f "properties.sh" ]; then
+            sed -i "s/TERMUX_APP_PACKAGE=\"com.termux\"/TERMUX_APP_PACKAGE=\"$PKG_NAME\"/g" properties.sh
+          fi
 
       - name: Build Minimal Bootstrap via Official Docker Container
         run: |

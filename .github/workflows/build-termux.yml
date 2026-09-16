@@ -21,8 +21,7 @@ jobs:
       - name: Maximize Build Space
         run: |
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
+                    sudo rm -rf /opt/ghc
           sudo rm -rf /usr/local/share/boost
           df -h
 
@@ -91,8 +90,11 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Ensure Android SDK Permissions
+        run: |
+          sudo mkdir -p /usr/local/lib/android/sdk
+          sudo chown -R runner:docker /usr/local/lib/android
+          export ANDROID_HOME=/usr/local/lib/android/sdk
 
       - name: Embed Bootstrap & Rebrand APK
         run: |
